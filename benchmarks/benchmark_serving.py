@@ -30,7 +30,7 @@ from tqdm import tqdm
 REQUEST_LATENCY: List[Tuple[int, int, float]] = []
 
 
-def create_request_pool(tokenizer, max_output_len):
+def create_request_pool(tokenizer, max_output_len, enable_thinking=False):
     from datasets import load_dataset, concatenate_datasets
 
     subjects = ['algebra', 'counting_and_probability', 'geometry',
@@ -44,7 +44,14 @@ def create_request_pool(tokenizer, max_output_len):
     dataset = dataset.shuffle().select(range(100))
     request_pool = []
     for data in tqdm(dataset, desc="Creating request pool"):
-        prompt = data["problem"]
+        # Apply chat template (matches benchmark_throughput.py behavior)
+        messages = [{"role": "user", "content": data["problem"]}]
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+        )
         prompt_len = len(tokenizer(prompt).input_ids)
         request_pool.append((prompt, prompt_len, max_output_len))
 
@@ -60,21 +67,41 @@ async def send_request(
     max_output_len: int,
     quant_config: List[int] = None,
     compress_config: List[float] = None,
+    enable_thinking: bool = False,
 ) -> None:
     request_start_time = time.perf_counter()
     headers = {"User-Agent": "Benchmark Client"}
 
-    pload = {
-        "prompt": prompt,
-        "n": 1,
-        "temperature": 0.0,
-        "max_tokens": max_output_len,
-        "ignore_eos": True,
-        "stream": False,
-        "quant_config": quant_config,
-        "quant_groups": [1,1,1,1],
-        "compress_config": compress_config,
-    }
+    if enable_thinking:
+        # Match benchmark_throughput.py thinking mode sampling params
+        pload = {
+            "prompt": prompt,
+            "n": 1,
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 40,
+            "min_p": 0.0,
+            "max_tokens": max_output_len,
+            "ignore_eos": False,
+            "stop": ["</think>", "<|im_end|>"],
+            "include_stop_str_in_output": True,
+            "stream": False,
+            "quant_config": quant_config,
+            "quant_groups": [1,1,1,1],
+            "compress_config": compress_config,
+        }
+    else:
+        pload = {
+            "prompt": prompt,
+            "n": 1,
+            "temperature": 0.0,
+            "max_tokens": max_output_len,
+            "ignore_eos": False,
+            "stream": False,
+            "quant_config": quant_config,
+            "quant_groups": [1,1,1,1],
+            "compress_config": compress_config,
+        }
 
     timeout = aiohttp.ClientTimeout(total=3 * 3600)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -105,32 +132,33 @@ async def benchmark(
     max_completed: int,
     quant_config: List[int] = None,
     compress_config: List[float] = None,
+    enable_thinking: bool = False,
 ) -> None:
     tasks: List[asyncio.Task] = []
 
-    while True:
-        # Stop once we've recorded enough completed requests.
-        if len(REQUEST_LATENCY) >= max_completed:
-            break
-
-        # Pick a random prompt from the pool.
+    # Send exactly max_completed requests, then wait for all to finish.
+    for i in range(max_completed):
         prompt, prompt_len, max_output_len = random.choice(request_pool)
         task = asyncio.create_task(
-            send_request(api_url, tokenizer, prompt, prompt_len, max_output_len, quant_config=quant_config, compress_config=compress_config)
+            send_request(api_url, tokenizer, prompt, prompt_len, max_output_len, quant_config=quant_config, compress_config=compress_config, enable_thinking=enable_thinking)
         )
         tasks.append(task)
 
-        # Poisson‑distributed inter‑arrival time.
-        interval = 0.0 if request_rate == float("inf") \
-            else np.random.exponential(1.0 / request_rate)
-        await asyncio.sleep(interval)
+        # Poisson‑distributed inter‑arrival time (skip for last request).
+        if i < max_completed - 1:
+            interval = 0.0 if request_rate == float("inf") \
+                else np.random.exponential(1.0 / request_rate)
+            await asyncio.sleep(interval)
+
+    # Wait for all sent requests to complete.
+    await asyncio.gather(*tasks)
 
 
 def main(args: argparse.Namespace):
     print(args)
     api_url = f"http://{args.host}:{args.port}/generate"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    request_pool = create_request_pool(tokenizer, args.max_output_len)
+    request_pool = create_request_pool(tokenizer, args.max_output_len, enable_thinking=args.enable_thinking)
 
     quant_config = [args.kbits_high, args.vbits_high, args.kbits_low, args.vbits_low]
     if args.kbits_high == args.kbits_low and args.vbits_high == args.vbits_low:
@@ -147,6 +175,7 @@ def main(args: argparse.Namespace):
             args.num_requests,
             quant_config=quant_config,
             compress_config=compress_config,
+            enable_thinking=args.enable_thinking,
         )
     )
     benchmark_end_time = time.perf_counter()
@@ -204,6 +233,9 @@ if __name__ == "__main__":
     parser.add_argument("--kv-quant-thresh", type=float)
     parser.add_argument("--max-batch-size", type=int, default=256)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
+    parser.add_argument("--enable-thinking", action="store_true",
+                        help="Enable Qwen3 Think/CoT mode (applies chat template "
+                             "with thinking and uses QwQ-style sampling).")
 
     args = parser.parse_args()
     main(args)

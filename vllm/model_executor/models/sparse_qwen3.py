@@ -20,7 +20,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Inference-only Qwen3 model compatible with HuggingFace weights."""
+"""Inference-only Qwen3 model compatible with HuggingFace weights.
+
+This module extends the base Qwen3 architecture with DiffKV's sparse KV cache
+and supports Qwen3's Think/Reasoning (CoT) mode. The Think mode injects
+<think>...</think> blocks via prompt engineering and stop-token control,
+without modifying the core attention or CUDA kernel paths.
+"""
+import logging
 from typing import Iterable, Optional, Set, Tuple, Union
 
 import torch
@@ -299,6 +306,16 @@ class Qwen3Model(nn.Module):
         return hidden_states
 
 
+logger = logging.getLogger(__name__)
+
+# ─── Qwen3 Think/Reasoning mode constants ───
+# These special tokens delimit the Chain-of-Thought reasoning block.
+# The model is prompted with <think>\n appended to the user query;
+# generation stops when </think> is emitted.
+THINK_START_TOKEN = "<think>"
+THINK_END_TOKEN = "</think>"
+
+
 class Qwen3ForCausalLM(nn.Module):
 
     def __init__(
@@ -310,6 +327,18 @@ class Qwen3ForCausalLM(nn.Module):
     ) -> None:
         super().__init__()
         self.config = config
+
+        # ─── Think/Reasoning mode ───
+        # Enabled by default for Qwen3 reasoning models.
+        # Can be explicitly set via config.enable_thinking = False to disable.
+        self.enable_thinking = getattr(config, "enable_thinking", True)
+        if self.enable_thinking:
+            logger.info(
+                "Qwen3 Think mode enabled. Prompts will be augmented with "
+                "<%s> tags for Chain-of-Thought reasoning.",
+                THINK_START_TOKEN,
+            )
+
         self.model = Qwen3Model(
             config,
             kv_buffer_size,
@@ -338,6 +367,52 @@ class Qwen3ForCausalLM(nn.Module):
         next_tokens = self.sampler(self.lm_head.weight, hidden_states,
                                    sampling_metadata)
         return next_tokens
+
+    # ─── Think mode helpers ───────────────────────────────────────────
+
+    @staticmethod
+    def build_think_prompt(user_prompt: str) -> str:
+        """Wrap a user prompt for Think/CoT generation.
+
+        Appends the <think> tag so the model enters reasoning mode.
+        The caller should set stop=["</think>"] in SamplingParams to
+        capture the full reasoning block.
+
+        Example:
+            >>> Qwen3ForCausalLM.build_think_prompt("What is 2+2?")
+            'What is 2+2? Please reason step by step, ...\n<think>\n'
+        """
+        suffix = (
+            r" Please reason step by step, and put your final answer "
+            r"within \boxed{}." + f"\n{THINK_START_TOKEN}\n"
+        )
+        return user_prompt + suffix
+
+    @staticmethod
+    def get_think_sampling_params(
+        max_tokens: int = 8192,
+        temperature: float = 0.6,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        min_p: float = 0.0,
+    ):
+        """Return SamplingParams tuned for Qwen3 Think/Reasoning mode.
+
+        Uses the QwQ-style sampling configuration with </think> as a
+        stop token. These parameters align with the official Qwen3
+        reasoning recommendations.
+        """
+        from vllm.sampling_params import SamplingParams
+
+        return SamplingParams(
+            n=1,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            max_tokens=max_tokens,
+            stop=[THINK_END_TOKEN],
+        )
 
     def load_weights(self,
                      model_name_or_path: str,

@@ -179,15 +179,18 @@ def eval_qa_correct(
     
     for i, p in enumerate(processes):
         out, err = p.communicate()
-        while check_vllm_stderr(err):
-            print(f'*** gpu {GPUS[i]}\nstdout: {out}\nstderr: {err}\n***')
-            rerun_cmd = all_cmds[i]
-            print(f'*** rerun cmd: {rerun_cmd}')
-            # rerun the failed pass
-            rerun_p = subprocess.Popen(rerun_cmd, shell=True, 
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
-            out, err = rerun_p.communicate()
+        ########## jheo - for addressing infinite loop problem ##########
+        # while check_vllm_stderr(err):
+        #     print(f'*** gpu {GPUS[i]}\nstdout: {out}\nstderr: {err}\n***')
+        #     rerun_cmd = all_cmds[i]
+        #     print(f'*** rerun cmd: {rerun_cmd}')
+        #     # rerun the failed pass
+        #     rerun_p = subprocess.Popen(rerun_cmd, shell=True, 
+        #                                stdout=subprocess.PIPE,
+        #                                stderr=subprocess.PIPE)
+        #     out, err = rerun_p.communicate()
+        ########## jheo - for addressing infinite loop problem ##########
+
         # assert len(err) == 0
         print(f'*** gpu {GPUS[i]}\nstdout: {out}\n***')
         print(f'*** gpu {GPUS[i]}\nstderr: {err}\n***')
@@ -310,7 +313,7 @@ def main(args: argparse.Namespace):
         model_name = 'mistralai/Mixtral-8x7B-Instruct-v0.1'
     elif args.model == 'qwen2':
         assert model_size in [7, 32, 72]
-        model_name = f'/data1/modelscope/Qwen2.5-{model_size}B-Instruct'
+        model_name = f'/home/jheo/models/Qwen2.5-{model_size}B-Instruct'
     elif args.model == 'qwq':
         assert model_size in [32]
         model_name = f'/data1/modelscope/QwQ-{model_size}B'
