@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  1단계: 탐색 단계 — Qwen3-8B Serving Saturation Point 탐색 (4-GPU 병렬)
+#  1단계: 탐색 단계 — Qwen3-8B Serving Saturation Point 탐색 (2-GPU 병렬)
 #  각 GPU에 vLLM 서버를 띄우고 Request Rate를 분배하여 병렬 실행
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -9,22 +9,22 @@ set -euo pipefail
 export PYTHONPATH=/workspace/DiffKV_base:${PYTHONPATH:-}
 export HF_DOWNLOAD_DIR=/workspace/models
 
-MODEL=/home/jheo/models/Qwen3-8B
-BASE_PORT=8000
-LOG_DIR=/home/jheo/DiffKV_base/log/serving/exploratory
-BENCHMARK_DIR=/home/jheo/DiffKV_base/benchmarks
-NUM_GPUS=4
+MODEL=/workspace/models/Qwen3-8B
+BASE_PORT=8010
+LOG_DIR=/workspace/DiffKV_base/log/serving/exploratory
+BENCHMARK_DIR=/workspace/DiffKV_base/benchmarks
+NUM_GPUS=2
 
 rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 # ── Request Rate 분배 ──
-# 7개 rate를 4개 GPU에 분배
+# 7개 rate를 2개 GPU에 분배
 ALL_RATES=(0.1 0.2 0.5 1.0 2.0 5.0 10.0)
 NUM_REQUESTS=1000
 
 # GPU별 rate 할당 (라운드 로빈)
-declare -a GPU0_RATES GPU1_RATES GPU2_RATES GPU3_RATES
+declare -a GPU0_RATES GPU1_RATES
 for i in "${!ALL_RATES[@]}"; do
     gpu=$((i % NUM_GPUS))
     eval "GPU${gpu}_RATES+=(${ALL_RATES[$i]})"
@@ -115,25 +115,17 @@ run_worker() {
     echo "[GPU${gpu_id}] Done. Server stopped."
 }
 
-# ── 4개 GPU에 워커 병렬 실행 ──
+# ── 2개 GPU에 워커 병렬 실행 ──
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Rate 분배:"
 echo "    GPU0: ${GPU0_RATES[*]}"
 echo "    GPU1: ${GPU1_RATES[*]}"
-echo "    GPU2: ${GPU2_RATES[*]}"
-echo "    GPU3: ${GPU3_RATES[*]}"
 echo "═══════════════════════════════════════════════════════════════"
 
 run_worker 0 "${GPU0_RATES[@]}" &
 WORKER_PIDS+=($!)
 
 run_worker 1 "${GPU1_RATES[@]}" &
-WORKER_PIDS+=($!)
-
-run_worker 2 "${GPU2_RATES[@]}" &
-WORKER_PIDS+=($!)
-
-run_worker 3 "${GPU3_RATES[@]}" &
 WORKER_PIDS+=($!)
 
 # ── 모든 워커 완료 대기 ──
