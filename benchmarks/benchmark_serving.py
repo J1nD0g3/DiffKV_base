@@ -156,6 +156,8 @@ async def benchmark(
 
 def main(args: argparse.Namespace):
     print(args)
+    print(f"[CONFIG] Thinking mode: {'ENABLED' if args.enable_thinking else 'DISABLED'}")
+    print(f"[CONFIG] Sending {args.num_requests} requests (from pool of 100)")
     api_url = f"http://{args.host}:{args.port}/generate"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     request_pool = create_request_pool(tokenizer, args.max_output_len, enable_thinking=args.enable_thinking)

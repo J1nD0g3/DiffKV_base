@@ -6,14 +6,15 @@
 set -euo pipefail
 
 # ── 환경 설정 ──
-export PYTHONPATH=/home/jheo/DiffKV:$PYTHONPATH
-export HF_DOWNLOAD_DIR=/home/jheo/models
+export PYTHONPATH=/workspace/DiffKV_base:${PYTHONPATH:-}
+export HF_DOWNLOAD_DIR=/workspace/models
 
-MODEL=/home/jheo/models/Qwen3-8B
+MODEL=/workspace/models/Qwen3-8B
 PORT=8000
-LOG_DIR=/home/jheo/DiffKV/log/serving/exploratory
-BENCHMARK_DIR=/home/jheo/DiffKV/benchmarks
+LOG_DIR=/workspace/DiffKV_base/log/serving/exploratory
+BENCHMARK_DIR=/workspace/DiffKV_base/benchmarks
 
+rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 # ── 서버 종료 핸들러 ──
@@ -62,7 +63,7 @@ echo "[INFO] Server is ready!"
 
 # ── 탐색 실험: Request Rate 변동 ──
 REQUEST_RATES=(0.5 1.0 2.0 4.0 8.0 inf)
-NUM_REQUESTS=5
+NUM_REQUESTS=1000
 
 for RATE in "${REQUEST_RATES[@]}"; do
     echo ""
@@ -82,6 +83,7 @@ for RATE in "${REQUEST_RATES[@]}"; do
         --vbits-low 2 \
         --kv-prune-thresh 0.02 \
         --kv-quant-thresh 1.0 \
+        --enable-thinking \
         2>&1 | tee "$LOG_DIR/rate_${RATE}.log"
 
     echo "[INFO] Rate=${RATE} completed. Log saved to $LOG_DIR/rate_${RATE}.log"
