@@ -62,7 +62,7 @@ done
 echo "[INFO] Server is ready!"
 
 # ── 탐색 실험: Request Rate 변동 ──
-REQUEST_RATES=(0.5 1.0 2.0 4.0 8.0 inf)
+REQUEST_RATES=(0.1 0.2 0.5 1.0 2.0 5.0 10.0)
 NUM_REQUESTS=1000
 
 for RATE in "${REQUEST_RATES[@]}"; do

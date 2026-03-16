@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 from transformers import AutoConfig, PretrainedConfig
@@ -19,9 +20,13 @@ _CONFIG_REGISTRY = {
 def get_config(model: str,
                trust_remote_code: bool,
                revision: Optional[str] = None) -> PretrainedConfig:
+    kwargs = {}
+    if os.path.isdir(model):
+        kwargs["local_files_only"] = True
     try:
         config = AutoConfig.from_pretrained(
-            model, trust_remote_code=trust_remote_code, revision=revision)
+            model, trust_remote_code=trust_remote_code, revision=revision,
+            **kwargs)
     except ValueError as e:
         if (not trust_remote_code and
                 "requires you to execute the configuration file" in str(e)):
